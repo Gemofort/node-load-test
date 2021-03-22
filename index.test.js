@@ -18,26 +18,78 @@ axiosInstance.interceptors.response.use((response) => {
   return response;
 });
 
-let [data, headers, errorsCount, reqTimeoutCount] = [{}, {}, 0, 0];
+let [data, headers, reqTime, testResults, errorsCount, retCount, errorOverflowCount, reqTimeoutCount, userCount] = [{}, {}, [], [], 0, 0, 0, 0, 0];
 
 // const randInt = () => Math.floor(Math.random() * 100000);
 
-const checkRequestTimeout = (time) => {
-  if (time > 1000) {
+const updateRequestTime = (time) => {
+  reqTime.push(time);
+  //if (time > 1000) {
+  //  reqTimeoutCount += 1;
+  //  if (reqTimeoutCount >= 3) {
+  //    console.log(chalk.red(`Request timeout count exceeded: ${reqTimeoutCount} timeouts ocured`));
+  //    process.exit(1);
+  //  }
+  //}
+};
+
+const updateErrorsCount = (retCode) => {
+  if (retCode)
+    retCount += 1;
+  else
+    errorsCount += 1;
+};
+
+const checkErrors = () => {
+  if (errorsCount / retCount >= 0.01) {
+    errorOverflowCount += 1;
+    if (errorOverflowCount > 3) {
+      console.log(chalk.red(`Errors count exceeded: ${errorsCount} errors ocured`));
+      process.exit(1);
+    }
+  }
+  errorOverflowCount = 0;
+  reqTime.sort();
+  if (reqTime[Math.ceil(reqTime.length * 0.99) - 1] > 1000) {
     reqTimeoutCount += 1;
-    if (reqTimeoutCount >= 3) {
+    if (reqTimeoutCount > 3) {
       console.log(chalk.red(`Request timeout count exceeded: ${reqTimeoutCount} timeouts ocured`));
       process.exit(1);
     }
   }
+  reqTimeoutCount = 0;
+
+  testResults.push({ times: reqTime.slice(), errorRate: errorsCount / retCount });
 };
 
-const checkErrorsCount = () => {
-  errorsCount += 1;
-  if (errorsCount >= 3) {
-    console.log(chalk.red(`Errors count exceeded: ${errorsCount} errors ocured`));
-    process.exit(1);
-  }
+const requests = {
+  redirect : { method : axiosInstance.post,
+               path : "/r/b",
+               request : { }},
+  shorten : { method : axiosInstance.post,
+              path : "/url/shorten",
+              request : { headers: { Authorization : `Bearer ${token}`},
+                          url : "google.com"}},
+  signin : { method : axiosInstance.post,
+             path : "/user/signin",
+             request : { email: "kekw", password: "password" }},
+  signup : { method : axiosInstance.post,
+             path : "/user/signup",
+             request : { email: "", password: "password" }}
+};
+
+const getRequest = (randNum) => {
+    if (randNum % 100000) {
+        ret = requests.signup;
+        ret.request.email = `kekw${userCount++}`;
+        return ret;
+    } else if (randNum % 10000) {
+        return requests.signin;
+    } else if (randNum % 1000) {
+        return requests.shorten;
+    } else {
+        return requests.redirect;
+    }
 };
 
 const QPS = 100;
@@ -53,10 +105,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const promiseArray = [];
     for (let j = 0; j < 30 * i; j += 1) {
+	  request = getRequest(randInt());
       promiseArray.push(
-        axiosInstance.post('/users/signup', { email: `kekw${i}-${j}`, password: 'password' })
+        request.method(request.path, request.request)
+        //axiosInstance.post('/users/signup', { email: `kekw${i}-${j}`, password: 'password' })
+          // нам точно нужно считать ошибки и здесь и в конце?
           .catch(() => {
-            checkErrorsCount();
+            updateErrorsCount(1);
           }),
       );
       await sleep(milliseconds);
@@ -66,14 +121,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       .forEach((response) => {
         try {
           const time = response.value.headers['request-duration'];
-          checkRequestTimeout(time);
+          updateRequestTime(time);
+          updateErrorsCount(0);
 
           return null;
         } catch (err) {
-          checkErrorsCount();
+          updateRequestTime(10000);
+          updateErrorsCount(1);
 
           return null;
         }
       });
+    checkErrors();
   }
 })();
