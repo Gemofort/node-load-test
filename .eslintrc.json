@@ -13,6 +13,8 @@
     "rules": {
         "no-console": "off",
         "camelcase": "off",
-        "no-await-in-loop": "off"
+        "no-await-in-loop": "off",
+        "max-len": ["warn", 120],
+        "no-plusplus": "off"
     }
 }

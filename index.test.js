@@ -1,6 +1,8 @@
 const axios = require('axios');
 const chalk = require('chalk');
 
+const { beforeAll } = require('./beforeAll');
+
 const axiosConfig = { baseURL: 'http://127.0.0.1:8080' };
 const axiosInstance = axios.create(axiosConfig);
 
@@ -18,78 +20,100 @@ axiosInstance.interceptors.response.use((response) => {
   return response;
 });
 
-let [data, headers, reqTime, testResults, errorsCount, retCount, errorOverflowCount, reqTimeoutCount, userCount] = [{}, {}, [], [], 0, 0, 0, 0, 0];
+const [reqTime, testResults] = [[], []];
 
-// const randInt = () => Math.floor(Math.random() * 100000);
+let [
+  errorsCount,
+  retCount,
+  errorOverflowCount,
+  reqTimeoutCount,
+] = [0, 0, 0, 0];
+
+const randInt = () => Math.floor(Math.random() * 100000);
 
 const updateRequestTime = (time) => {
   reqTime.push(time);
-  //if (time > 1000) {
-  //  reqTimeoutCount += 1;
-  //  if (reqTimeoutCount >= 3) {
-  //    console.log(chalk.red(`Request timeout count exceeded: ${reqTimeoutCount} timeouts ocured`));
-  //    process.exit(1);
-  //  }
-  //}
 };
 
 const updateErrorsCount = (retCode) => {
-  if (retCode)
-    retCount += 1;
-  else
-    errorsCount += 1;
+  if (retCode) errorsCount += 1;
+  else retCount += 1;
 };
 
 const checkErrors = () => {
-  if (errorsCount / retCount >= 0.01) {
+  if (errorsCount / (retCount + errorsCount) >= 0.01) {
     errorOverflowCount += 1;
-    if (errorOverflowCount > 3) {
+    console.log(errorsCount / (retCount + errorsCount));
+    if (errorOverflowCount >= 3) {
       console.log(chalk.red(`Errors count exceeded: ${errorsCount} errors ocured`));
       process.exit(1);
     }
+  } else {
+    errorOverflowCount = 0;
   }
-  errorOverflowCount = 0;
-  reqTime.sort();
+
+  reqTime.sort((a, b) => a - b);
   if (reqTime[Math.ceil(reqTime.length * 0.99) - 1] > 1000) {
     reqTimeoutCount += 1;
-    if (reqTimeoutCount > 3) {
+    if (reqTimeoutCount >= 3) {
       console.log(chalk.red(`Request timeout count exceeded: ${reqTimeoutCount} timeouts ocured`));
       process.exit(1);
     }
+  } else {
+    reqTimeoutCount = 0;
   }
-  reqTimeoutCount = 0;
 
-  testResults.push({ times: reqTime.slice(), errorRate: errorsCount / retCount });
+  testResults.push({ times: reqTime.slice(), errorRate: errorsCount / (retCount + errorsCount) });
+
+  retCount = 0;
+  errorsCount = 0;
 };
 
 const requests = {
-  redirect : { method : axiosInstance.post,
-               path : "/r/b",
-               request : { }},
-  shorten : { method : axiosInstance.post,
-              path : "/url/shorten",
-              request : { headers: { Authorization : `Bearer ${token}`},
-                          url : "google.com"}},
-  signin : { method : axiosInstance.post,
-             path : "/user/signin",
-             request : { email: "kekw", password: "password" }},
-  signup : { method : axiosInstance.post,
-             path : "/user/signup",
-             request : { email: "", password: "password" }}
+  redirect: {
+    method: 'get',
+    url: '/r/',
+  },
+  shorten: {
+    method: 'post',
+    url: '/url/shorten',
+    data: { url: 'google.com' },
+    headers: { Authorization: 'Bearer' },
+  },
+  signin: {
+    method: 'post',
+    url: '/users/signin',
+    data: { email: 'kekw', password: 'password' },
+  },
+  signup: {
+    method: 'post',
+    url: '/users/signup',
+    data: { email: '', password: 'password' },
+  },
 };
 
-const getRequest = (randNum) => {
-    if (randNum % 100000) {
-        ret = requests.signup;
-        ret.request.email = `kekw${userCount++}`;
-        return ret;
-    } else if (randNum % 10000) {
-        return requests.signin;
-    } else if (randNum % 1000) {
-        return requests.shorten;
-    } else {
-        return requests.redirect;
-    }
+const getRequest = (randNum, usersCounter) => {
+  if ((randNum % 100000) === 0) {
+    const ret = requests.signup;
+
+    ret.data.email = `kekw${usersCounter}`;
+    return ret;
+  }
+
+  if ((randNum % 10000) === 0) {
+    return requests.signin;
+  }
+
+  if ((randNum % 1000) === 0) {
+    return requests.shorten;
+  }
+
+  return requests.redirect;
+};
+
+const setupRequests = (generatedToken, url) => {
+  requests.redirect.url = `/r/${url}`;
+  requests.shorten.headers = { Authorization: `Bearer ${generatedToken}` };
 };
 
 const QPS = 100;
@@ -97,6 +121,9 @@ const QPS = 100;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
+  const res = await beforeAll(axiosInstance);
+  setupRequests('/r/1', res.shortenedUrl);
+
   for (let i = 10; i <= QPS; i += 10) {
     const milliseconds = 1000 / i;
 
@@ -105,15 +132,14 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
     const promiseArray = [];
     for (let j = 0; j < 30 * i; j += 1) {
-	  request = getRequest(randInt());
+      const request = getRequest(randInt(), `${i}${j}`);
       promiseArray.push(
-        request.method(request.path, request.request)
-        //axiosInstance.post('/users/signup', { email: `kekw${i}-${j}`, password: 'password' })
-          // нам точно нужно считать ошибки и здесь и в конце?
-          .catch(() => {
-            updateErrorsCount(1);
+        axiosInstance(request)
+          .catch((err) => {
+            console.log(err);
           }),
       );
+
       await sleep(milliseconds);
     }
 
@@ -132,6 +158,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
           return null;
         }
       });
+
     checkErrors();
   }
 })();
