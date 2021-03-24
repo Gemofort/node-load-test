@@ -73,10 +73,14 @@ const requests = {
   redirect: {
     method: 'get',
     url: '/r/',
+    validateStatus(status) {
+      return status >= 200 && status < 400;
+    },
+    maxRedirects: 0,
   },
   shorten: {
     method: 'post',
-    url: '/url/shorten',
+    url: '/urls/shorten',
     data: { url: 'google.com' },
     headers: { Authorization: 'Bearer' },
   },
@@ -116,13 +120,13 @@ const setupRequests = (generatedToken, url) => {
   requests.shorten.headers = { Authorization: `Bearer ${generatedToken}` };
 };
 
-const QPS = 100;
+const QPS = 500;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
   const res = await beforeAll(axiosInstance);
-  setupRequests('/r/1', res.shortenedUrl);
+  setupRequests(res.token, res.shortenedUrl);
 
   for (let i = 10; i <= QPS; i += 10) {
     const milliseconds = 1000 / i;
@@ -135,9 +139,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const request = getRequest(randInt(), `${i}${j}`);
       promiseArray.push(
         axiosInstance(request)
-          .catch((err) => {
-            console.log(err);
-          }),
+          .catch((err) => { console.log(err); }),
       );
 
       await sleep(milliseconds);
