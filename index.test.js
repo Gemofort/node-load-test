@@ -1,3 +1,5 @@
+const fs = require('fs');
+
 const axios = require('axios');
 const chalk = require('chalk');
 
@@ -31,6 +33,19 @@ let [
 
 const randInt = () => Math.floor(Math.random() * 100000);
 
+const writeResults = (results) => {
+  const csvString = `QPS,Queries,Duration,50,90,99,errorRate
+${results
+  // eslint-disable-next-line max-len
+    .map((elem) => `${elem.QPS},${elem.queriesSent},${elem.duration},${elem.latency50},${elem.latency90},${elem.latency99},${elem.errorRate}`)
+    .join('\n')}`;
+
+  fs.writeFile('results.csv', csvString, (err) => {
+    if (err) console.log(err);
+    process.exit(1);
+  });
+};
+
 const updateRequestTime = (time) => {
   reqTime.push(time);
 };
@@ -40,30 +55,39 @@ const updateErrorsCount = (retCode) => {
   else retCount += 1;
 };
 
-const checkErrors = () => {
+const checkErrors = (QPS) => {
+  reqTime.sort((a, b) => a - b);
+
+  testResults.push({
+    QPS,
+    queriesSent: QPS * 30,
+    duration: 30,
+    latency50: reqTime[Math.ceil(reqTime.length * 0.5) - 1],
+    latency90: reqTime[Math.ceil(reqTime.length * 0.9) - 1],
+    latency99: reqTime[Math.ceil(reqTime.length * 0.99) - 1],
+    errorRate: errorsCount / (retCount + errorsCount),
+  });
+
   if (errorsCount / (retCount + errorsCount) >= 0.01) {
     errorOverflowCount += 1;
-    console.log(errorsCount / (retCount + errorsCount));
+    // console.log(errorsCount / (retCount + errorsCount));
     if (errorOverflowCount >= 3) {
       console.log(chalk.red(`Errors count exceeded: ${errorsCount} errors ocured`));
-      process.exit(1);
+      writeResults(testResults);
     }
   } else {
     errorOverflowCount = 0;
   }
 
-  reqTime.sort((a, b) => a - b);
   if (reqTime[Math.ceil(reqTime.length * 0.99) - 1] > 1000) {
     reqTimeoutCount += 1;
     if (reqTimeoutCount >= 3) {
       console.log(chalk.red(`Request timeout count exceeded: ${reqTimeoutCount} timeouts ocured`));
-      process.exit(1);
+      writeResults(testResults);
     }
   } else {
     reqTimeoutCount = 0;
   }
-
-  testResults.push({ times: reqTime.slice(), errorRate: errorsCount / (retCount + errorsCount) });
 
   retCount = 0;
   errorsCount = 0;
@@ -120,7 +144,7 @@ const setupRequests = (generatedToken, url) => {
   requests.shorten.headers = { Authorization: `Bearer ${generatedToken}` };
 };
 
-const QPS = 500;
+const QPS = 5000;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -128,7 +152,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const res = await beforeAll(axiosInstance);
   setupRequests(res.token, res.shortenedUrl);
 
-  for (let i = 10; i <= QPS; i += 10) {
+  for (let i = 50; i <= QPS; i += 50) {
     const milliseconds = 1000 / i;
 
     console.log(chalk.green(`Current QPS: ${i}`));
@@ -139,7 +163,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
       const request = getRequest(randInt(), `${i}${j}`);
       promiseArray.push(
         axiosInstance(request)
-          .catch((err) => { console.log(err); }),
+          .catch(() => { }),
       );
 
       await sleep(milliseconds);
@@ -161,6 +185,13 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
         }
       });
 
-    checkErrors();
+    checkErrors(i);
   }
+  const csvString = `QPS,Queries,Duration,50,90,99,errorRate
+${testResults
+  // eslint-disable-next-line max-len
+    .map((elem) => `${elem.QPS},${elem.queriesSent},${elem.duration},${elem.latency50},${elem.latency90},${elem.latency99},${elem.errorRate}`)
+    .join('\n')}`;
+
+  fs.writeFile('results.csv', csvString, (err) => { if (err) console.log(err); });
 })();
